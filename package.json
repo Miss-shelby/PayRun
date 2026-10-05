@@ -9,9 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.104.1",
+    "connectkit": "^1.9.2",
+    "jszip": "^3.10.2",
     "next": "16.3.8",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "papaparse": "^5.7.0",
+    "pdf-lib": "^1.17.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "viem": "^2.57.2",
+    "wagmi": "^3.7.7",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -21,6 +29,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   },
   "packageManager": "pnpm@10.28.1"
