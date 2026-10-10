@@ -56,3 +56,18 @@ export const multicall3FromAbi = [
     ],
   },
 ] as const;
+
+export const memoAbi = [
+  {
+    name: 'memo',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'target', type: 'address' },
+      { name: 'data', type: 'bytes' },
+      { name: 'memoId', type: 'bytes32' },
+      { name: 'memoData', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+] as const;

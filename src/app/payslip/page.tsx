@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { generatePayslipPdf } from '@/lib/payroll/pdfGenerator';
 import { Preloader } from '@/components/Preloader';
+import { getArcNetwork } from '@/lib/chain/constants';
 
 function PayslipContent() {
   const searchParams = useSearchParams();
@@ -165,7 +166,7 @@ function PayslipContent() {
           </button>
 
           <a
-            href={`https://explorer.testnet.arc.network/tx/${txHash}`}
+            href={`${getArcNetwork().explorerUrl}/tx/${txHash}`}
             target="_blank"
             rel="noreferrer"
             className="px-6 py-3 rounded-xl bg-[#EAE4D3] hover:bg-[#DDD6C3] text-[#2C422C] text-xs font-semibold transition-all cursor-pointer"

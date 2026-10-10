@@ -1,24 +1,16 @@
 import { createConfig, http } from 'wagmi';
-import { defineChain } from 'viem';
 import { injected } from 'wagmi/connectors';
+import { ARC_MAINNET, ARC_TESTNET, getArcNetwork, NETWORK_CONFIGS } from './constants';
 
-export const arcTestnet = defineChain({
-  id: 5042002,
-  name: 'Arc Testnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
-  rpcUrls: {
-    default: { http: ['https://rpc.testnet.arc.network'] },
-  },
-  blockExplorers: {
-    default: { name: 'ArcScan', url: 'https://explorer.testnet.arc.network' },
-  },
-});
+const activeNet = getArcNetwork();
 
 export const config = createConfig({
-  chains: [arcTestnet],
+  chains: activeNet.network === 'testnet' ? [ARC_TESTNET, ARC_MAINNET] : [ARC_MAINNET, ARC_TESTNET],
   connectors: [injected()],
   transports: {
-    [arcTestnet.id]: http(),
+    [ARC_MAINNET.id]: http(NETWORK_CONFIGS.mainnet.rpcUrl),
+    [ARC_TESTNET.id]: http(NETWORK_CONFIGS.testnet.rpcUrl),
   },
   ssr: true,
 });
+

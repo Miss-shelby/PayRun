@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ConnectWalletButton } from '@/components/ConnectWalletButton';
 import { Preloader } from '@/components/Preloader';
+import { getArcNetwork } from '@/lib/chain/constants';
 
 export default function DocsPage() {
   return (
@@ -173,7 +174,7 @@ export default function DocsPage() {
             <Link href="/docs" className="hover:text-[#1A2218]">
               Docs
             </Link>
-            <a href="https://explorer.testnet.arc.network" target="_blank" rel="noreferrer" className="hover:text-[#1A2218]">
+            <a href={getArcNetwork().explorerUrl} target="_blank" rel="noreferrer" className="hover:text-[#1A2218]">
               Arc Explorer
             </a>
           </div>

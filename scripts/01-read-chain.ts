@@ -1,21 +1,5 @@
-import { createPublicClient, http, formatUnits, getAddress } from "viem";
-import { defineChain } from "viem";
-
-// 1. Define Arc Testnet details
-export const arcTestnet = defineChain({
-  id: 5042002,
-  name: "Arc Testnet",
-  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-  rpcUrls: {
-    default: { http: ["https://rpc.testnet.arc.network"] },
-  },
-  blockExplorers: {
-    default: { name: "ArcScan", url: "https://explorer.testnet.arc.network" },
-  },
-});
-
-// 2. Pre-deployed contract addresses on Arc Testnet
-const USDC_TESTNET = "0x3600000000000000000000000000000000000000"; // Testnet USDC
+import { createPublicClient, http, formatUnits } from "viem";
+import { getArcNetwork } from "../src/lib/chain/constants";
 
 // Standard ERC-20 balanceOf function ABI snippet
 const erc20BalanceAbi = [
@@ -29,24 +13,25 @@ const erc20BalanceAbi = [
 ] as const;
 
 async function main() {
-  console.log("🚀 Connecting to Arc Testnet...\n");
+  const activeNet = getArcNetwork();
+  console.log(`🚀 Connecting to ${activeNet.chain.name} (${activeNet.rpcUrl})...\n`);
 
   // Create a read-only client to talk to the blockchain RPC
   const publicClient = createPublicClient({
-    chain: arcTestnet,
-    transport: http(),
+    chain: activeNet.chain,
+    transport: http(activeNet.rpcUrl),
   });
 
   // Get current block number
   const blockNumber = await publicClient.getBlockNumber();
   console.log(`✅ Connected! Current Block Number: ${blockNumber}`);
 
-  // Test address (Arc USDC contract address as test recipient)
-  const testAccount = "0x3600000000000000000000000000000000000000";
+  // Test address (USDC contract address)
+  const testAccount = activeNet.usdcAddress;
 
-  // Read testnet USDC total supply or balance
+  // Read USDC total supply or balance
   const balanceRaw = await publicClient.readContract({
-    address: USDC_TESTNET,
+    address: activeNet.usdcAddress,
     abi: erc20BalanceAbi,
     functionName: "balanceOf",
     args: [testAccount],
@@ -57,8 +42,9 @@ async function main() {
 
   console.log(`\n💼 Contract Test Account: ${testAccount}`);
   console.log(`💰 Query result: ${balanceFormatted} USDC`);
-  console.log(`\n🎉 Connection to Arc Testnet is 100% SUCCESSFUL!`);
+  console.log(`\n🎉 Connection to ${activeNet.chain.name} is 100% SUCCESSFUL!`);
 }
 
 main().catch(console.error);
+
 

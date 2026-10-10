@@ -3,6 +3,8 @@ import Papa from 'papaparse';
 import { isAddress, getAddress } from 'viem';
 import { PayrollRow } from './types';
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
 export function parsePayrollCsv(csvRaw: string): PayrollRow[] {
   if (!csvRaw.trim()) return [];
 
@@ -28,25 +30,31 @@ export function parsePayrollCsv(csvRaw: string): PayrollRow[] {
     const amount = row[2]?.trim() || '0.00';
     const memo = row[3]?.trim() || `Payout - ${name}`;
 
-    const isValid = isAddress(rawAddr);
-    let checksumAddr = rawAddr;
-    if (isValid) {
-      try {
-        checksumAddr = getAddress(rawAddr.toLowerCase());
-      } catch (e) {
-        checksumAddr = rawAddr;
-      }
-    }
     const errors: string[] = [];
+    const isBaseAddressValid = isAddress(rawAddr.toLowerCase());
+    const isExactAddressValid = isAddress(rawAddr);
+    let checksumAddr = rawAddr;
 
     if (!rawAddr) {
       errors.push('Missing address');
-    } else if (!isValid) {
+    } else if (!isBaseAddressValid) {
       errors.push('Invalid 0x address format');
+    } else if (rawAddr.toLowerCase() === ZERO_ADDRESS) {
+      errors.push('Cannot send funds to zero address (address(0))');
+    } else if (!isExactAddressValid) {
+      errors.push('Invalid address checksum');
+      checksumAddr = getAddress(rawAddr.toLowerCase());
+    } else {
+      checksumAddr = getAddress(rawAddr);
     }
 
     if (isNaN(Number(amount)) || Number(amount) <= 0) {
       errors.push('Invalid amount');
+    } else {
+      const parts = amount.split('.');
+      if (parts[1] && parts[1].length > 6) {
+        errors.push('Amount exceeds maximum 6 decimal places for Arc tokens');
+      }
     }
 
     return {
@@ -56,7 +64,7 @@ export function parsePayrollCsv(csvRaw: string): PayrollRow[] {
       address: checksumAddr,
       amount,
       memo,
-      isValidAddress: isValid && errors.length === 0,
+      isValidAddress: errors.length === 0,
       errors,
     };
   });

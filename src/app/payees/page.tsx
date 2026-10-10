@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { ConnectWalletButton } from '@/components/ConnectWalletButton';
 import { Preloader } from '@/components/Preloader';
 import { PayrollRun, PayrollRow } from '@/lib/payroll/types';
 import { generatePayslipPdf, generateAllPayslipsPdf } from '@/lib/payroll/pdfGenerator';
+import { getArcNetwork } from '@/lib/chain/constants';
 
 type Payee = {
   id: string;
@@ -15,6 +16,7 @@ type Payee = {
 };
 
 export default function PayeesPage() {
+  const activeNet = useMemo(() => getArcNetwork(), []);
   const [payees, setPayees] = useState<Payee[]>([]);
   const [runs, setRuns] = useState<PayrollRun[]>([]);
 
@@ -258,7 +260,7 @@ export default function PayeesPage() {
                       </button>
 
                       <a
-                        href={`https://explorer.testnet.arc.network/tx/${run.txHash}`}
+                        href={`${activeNet.explorerUrl}/tx/${run.txHash}`}
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
@@ -482,7 +484,7 @@ export default function PayeesPage() {
 
             <div className="flex items-center justify-between pt-2">
               <a
-                href={`https://explorer.testnet.arc.network/tx/${selectedRunForReceipt.txHash}`}
+                href={`${activeNet.explorerUrl}/tx/${selectedRunForReceipt.txHash}`}
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-[#2C422C] font-bold underline"
@@ -505,13 +507,13 @@ export default function PayeesPage() {
       {/* FOOTER */}
       <footer className="border-t border-[#E6E0CE] bg-[#EEE8DA] py-8 px-8 mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#5C6658]">
-          <div>PayRun • Arc Network Microgrants Hackathon Project</div>
+          <div>PayRun • 2026</div>
           <div className="flex items-center gap-6">
             <Link href="/docs" className="hover:text-[#1A2218]">
               Docs
             </Link>
             <a
-              href="https://explorer.testnet.arc.network"
+              href={activeNet.explorerUrl}
               target="_blank"
               rel="noreferrer"
               className="hover:text-[#1A2218]"

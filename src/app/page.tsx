@@ -4,18 +4,19 @@ import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { ConnectWalletButton } from '@/components/ConnectWalletButton';
 import { Preloader } from '@/components/Preloader';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
-import { formatUnits, parseUnits, encodeFunctionData, isAddress, getAddress } from 'viem';
+import { useAccount, useReadContract, useWriteContract, useSwitchChain } from 'wagmi';
+import { formatUnits, parseUnits, encodeFunctionData, isAddress, getAddress, parseGwei } from 'viem';
 import { parsePayrollCsv } from '@/lib/payroll/parseCsv';
 import { PayrollRow, PayrollRun, Token } from '@/lib/payroll/types';
 import { generatePayslipPdf, generateAllPayslipsPdf } from '@/lib/payroll/pdfGenerator';
 import { erc20Abi, multicall3FromAbi } from '@/lib/chain/abis';
-
-const USDC_TESTNET = getAddress('0x3600000000000000000000000000000000000000');
-const MULTICALL3_FROM = getAddress('0x522f6b60021c3f91f3B98D5A344d5c1B85D347D0');
+import { getArcNetwork } from '@/lib/chain/constants';
+import { buildSubcalls } from '@/lib/chain/encoding';
 
 export default function Home() {
-  const { isConnected, address } = useAccount();
+  const activeNet = useMemo(() => getArcNetwork(), []);
+  const { isConnected, address, chain } = useAccount();
+  const { switchChain } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -59,21 +60,27 @@ export default function Home() {
     }
   }, []);
 
-  // Read wallet USDC balance
-  const { data: usdcBalanceRaw, refetch: refetchBalance } = useReadContract({
-    address: USDC_TESTNET,
+  // Active token contract address (USDC vs EURC)
+  const activeTokenAddress = token === 'EURC' ? activeNet.eurcAddress : activeNet.usdcAddress;
+
+  // Read wallet token balance on active network (Arc Mainnet)
+  const { data: tokenBalanceRaw, refetch: refetchBalance } = useReadContract({
+    address: activeTokenAddress,
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
+    chainId: activeNet.chainId,
     query: {
       enabled: !!address,
       refetchInterval: 2000,
     },
   });
 
+  const balanceUnitsBigInt = (tokenBalanceRaw as bigint | undefined) ?? 0n;
+
   const formattedBalance =
-    isConnected && address && usdcBalanceRaw !== undefined
-      ? formatUnits(usdcBalanceRaw, 6)
+    isConnected && address && tokenBalanceRaw !== undefined
+      ? formatUnits(tokenBalanceRaw, 6)
       : null;
 
   // Dynamic CSV parsing
@@ -82,25 +89,44 @@ export default function Home() {
   }, [csvContent]);
 
   const validRows = useMemo(() => {
-    return parsedRows.filter((r) => r.isValidAddress && r.address !== USDC_TESTNET);
-  }, [parsedRows]);
+    return parsedRows.filter(
+      (r) =>
+        r.isValidAddress &&
+        r.address.toLowerCase() !== activeNet.usdcAddress.toLowerCase() &&
+        r.address.toLowerCase() !== activeNet.eurcAddress.toLowerCase()
+    );
+  }, [parsedRows, activeNet]);
 
   const invalidRows = useMemo(() => {
-    return parsedRows.filter((r) => !r.isValidAddress || r.address === USDC_TESTNET);
-  }, [parsedRows]);
+    return parsedRows.filter(
+      (r) =>
+        !r.isValidAddress ||
+        r.address.toLowerCase() === activeNet.usdcAddress.toLowerCase() ||
+        r.address.toLowerCase() === activeNet.eurcAddress.toLowerCase()
+    );
+  }, [parsedRows, activeNet]);
+
+  const totalUnitsBigInt = useMemo(() => {
+    return validRows.reduce((acc, row) => {
+      try {
+        return acc + parseUnits(row.amount, 6);
+      } catch {
+        return acc;
+      }
+    }, 0n);
+  }, [validRows]);
 
   const totalAmountSum = useMemo(() => {
-    return validRows
-      .reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
-      .toFixed(2);
-  }, [validRows]);
+    return formatUnits(totalUnitsBigInt, 6);
+  }, [totalUnitsBigInt]);
 
   const estimatedGasFeeUsd = (validRows.length * 0.002).toFixed(3);
 
-  const balanceAfter =
-    formattedBalance !== null
-      ? (Number(formattedBalance) - Number(totalAmountSum)).toFixed(2)
-      : '—';
+  const balanceAfter = useMemo(() => {
+    if (!isConnected || !address || tokenBalanceRaw === undefined) return '—';
+    if (balanceUnitsBigInt < totalUnitsBigInt) return 'Insufficient Balance';
+    return formatUnits(balanceUnitsBigInt - totalUnitsBigInt, 6);
+  }, [isConnected, address, tokenBalanceRaw, balanceUnitsBigInt, totalUnitsBigInt]);
 
   // File Upload handler
   const handleFileUpload = (file: File) => {
@@ -144,10 +170,10 @@ export default function Home() {
     setCsvContent(defaultSample);
   };
 
-  // REAL ON-CHAIN TRANSACTION EXECUTION VIA WAGMI
+  // REAL ON-CHAIN TRANSACTION EXECUTION VIA WAGMI & Multicall3From
   const handleExecutePayout = async () => {
     if (!isConnected || !address) {
-      alert('Please connect your MetaMask wallet first using the top button!');
+      alert('Please connect your Web3 wallet first!');
       return;
     }
 
@@ -156,47 +182,39 @@ export default function Home() {
       return;
     }
 
+    if (balanceUnitsBigInt < totalUnitsBigInt) {
+      alert(
+        `Insufficient ${token} balance! Your balance is ${formatUnits(
+          balanceUnitsBigInt,
+          6
+        )} ${token}, but total payout is ${totalAmountSum} ${token}.`
+      );
+      return;
+    }
+
+    // Switch wallet network if connected to wrong chain
+    if (chain && chain.id !== activeNet.chainId && switchChain) {
+      try {
+        await switchChain({ chainId: activeNet.chainId });
+      } catch (e: any) {
+        console.warn('Network switch request:', e);
+      }
+    }
+
     setExecutionStatus('signing');
     setErrorMessage('');
 
     try {
-      let txHash = '';
+      const calls = buildSubcalls(validRows, token, activeNet);
 
-      if (validRows.length === 1) {
-        const row = validRows[0];
-        const recipientAddr = getAddress(row.address.toLowerCase());
-        const amountUnits = parseUnits(row.amount, 6);
-
-        txHash = await writeContractAsync({
-          address: USDC_TESTNET as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [recipientAddr as `0x${string}`, amountUnits],
-        });
-      } else {
-        const calls = validRows.map((row) => {
-          const recipientAddr = getAddress(row.address.toLowerCase());
-          const amountUnits = parseUnits(row.amount, 6);
-          const transferCalldata = encodeFunctionData({
-            abi: erc20Abi,
-            functionName: 'transfer',
-            args: [recipientAddr as `0x${string}`, amountUnits],
-          });
-
-          return {
-            target: USDC_TESTNET as `0x${string}`,
-            allowFailure: false,
-            callData: transferCalldata,
-          };
-        });
-
-        txHash = await writeContractAsync({
-          address: MULTICALL3_FROM as `0x${string}`,
-          abi: multicall3FromAbi,
-          functionName: 'aggregate3',
-          args: [calls],
-        });
-      }
+      const txHash = await writeContractAsync({
+        address: activeNet.multicall3FromAddress,
+        abi: multicall3FromAbi,
+        functionName: 'aggregate3',
+        args: [calls],
+        chainId: activeNet.chainId,
+        maxFeePerGas: parseGwei('20'),
+      });
 
       setTxHashResult(txHash);
       setExecutionStatus('success');
@@ -342,14 +360,30 @@ export default function Home() {
 
           {/* Right CTA / Wallet Badges */}
           <div className="flex items-center gap-3">
+            {/* Network Pill indicator & Switch Network prompt if wallet is on testnet/wrong chain */}
+            {isConnected && chain && chain.id !== activeNet.chainId ? (
+              <button
+                type="button"
+                onClick={() => switchChain && switchChain({ chainId: activeNet.chainId })}
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-semibold border border-amber-300 transition-colors cursor-pointer"
+                title={`Wallet connected to ${chain.name || 'different network'}. Click to switch to ${activeNet.chain.name}.`}
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                <span>Switch to {activeNet.chain.name}</span>
+              </button>
+            ) : (
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#EAE4D3] text-xs font-semibold text-[#2C422C] border border-[#DCD4C0]">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                <span>{activeNet.chain.name}</span>
+              </div>
+            )}
+
             {viewMode === 'app' ? (
               <>
-                {/* Balance Badge pill matching Image 3 (ONLY visible when wallet is connected) */}
+                {/* Balance Badge pill */}
                 {isConnected && address && formattedBalance !== null && (
-                  <div className="hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#EAE4D3] text-xs font-medium text-[#2C422C]">
-                    <span>{Number(formattedBalance).toFixed(2)} USDC</span>
-                    <span>•</span>
-                    <span>Arc Testnet</span>
+                  <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#E2DAC4] text-xs font-medium text-[#2C422C]">
+                    <span>{Number(formattedBalance).toFixed(2)} {token}</span>
                   </div>
                 )}
                 <ConnectWalletButton />
@@ -836,11 +870,11 @@ export default function Home() {
                     </thead>
                     <tbody className="divide-y divide-[#E8E2D2]">
                       {parsedRows.map((row) => {
-                        const isZero = row.address === USDC_TESTNET || !row.isValidAddress;
+                        const isInvalid = !row.isValidAddress;
                         return (
                           <tr
                             key={row.id}
-                            className={isZero ? 'bg-rose-50/70' : 'hover:bg-[#F5F1E6]/50'}
+                            className={isInvalid ? 'bg-rose-50/70' : 'hover:bg-[#F5F1E6]/50'}
                           >
                             <td className="py-4 px-6 text-xs font-mono text-[#5C6658]">
                               {row.index}
@@ -858,13 +892,13 @@ export default function Home() {
                               {row.memo}
                             </td>
                             <td className="py-4 px-6 text-right">
-                              {!isZero ? (
+                              {!isInvalid ? (
                                 <span className="inline-block px-3 py-1 rounded-full bg-[#DCE8D8] text-[#2E502E] text-[11px] font-semibold">
                                   Valid
                                 </span>
                               ) : (
                                 <span className="inline-block px-3 py-1 rounded-full bg-[#FCE8E6] text-[#C53030] text-[11px] font-semibold">
-                                  Zero address
+                                  {row.errors[0] || 'Invalid'}
                                 </span>
                               )}
                             </td>
@@ -1123,7 +1157,7 @@ export default function Home() {
                   {/* Action Buttons Row */}
                   <div className="flex flex-wrap items-center gap-3 pt-2">
                     <a
-                      href={`https://explorer.testnet.arc.network/tx/${
+                      href={`${activeNet.explorerUrl}/tx/${
                         txHashResult || '0xc17ec824c880162bc89e7a9ec7359bea6ae201b65084b2deb039544559f23552'
                       }`}
                       target="_blank"
@@ -1371,14 +1405,14 @@ export default function Home() {
       <footer className="border-t border-[#E6E0CE] bg-[#EEE8DA] py-8 px-8 mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#5C6658]">
           <div>
-            PayRun • Arc Network Microgrants Hackathon Project
+            PayRun • 2026
           </div>
 
           <div className="flex items-center gap-6">
             <Link href="/docs" className="hover:text-[#1A2218]">
               Docs
             </Link>
-            <a href="https://explorer.testnet.arc.network" target="_blank" rel="noreferrer" className="hover:text-[#1A2218]">
+            <a href={activeNet.explorerUrl} target="_blank" rel="noreferrer" className="hover:text-[#1A2218]">
               Arc Explorer
             </a>
             <a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-[#1A2218]">
