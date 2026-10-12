@@ -15,6 +15,7 @@ type Payee = {
   role: string;
 };
 
+
 export default function PayeesPage() {
   const activeNet = useMemo(() => getArcNetwork(), []);
   const [payees, setPayees] = useState<Payee[]>([]);
